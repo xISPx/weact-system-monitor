@@ -9,6 +9,8 @@ transfer pattern as the stock WeAct demo, proven to render reliably at
 If the on-screen text appears upside down, switch ROT between
 ROTATE_270 and ROTATE_90.
 """
+import ctypes
+import os
 import subprocess
 import sys
 import time
@@ -177,9 +179,18 @@ def read_cpu_temp():
         return None
 
 
+LOG_MAX_BYTES = 1_000_000  # rotate: keep the tail, drop the head
+
+
 def _log(msg):
-    prev = LOG_FILE.read_text(encoding="utf-8", errors="ignore") if LOG_FILE.exists() else ""
-    LOG_FILE.write_text(prev + f"[{time.strftime('%H:%M:%S')}] {msg}\n", encoding="utf-8")
+    try:
+        if LOG_FILE.exists() and LOG_FILE.stat().st_size > LOG_MAX_BYTES:
+            data = LOG_FILE.read_text(encoding="utf-8", errors="ignore")
+            LOG_FILE.write_text(data[-LOG_MAX_BYTES // 2:], encoding="utf-8")
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass  # logging must never take the monitor down
 
 
 def render(cpu, gpu_util, gpu_temp, ram, cpu_t):
@@ -206,13 +217,34 @@ def render(cpu, gpu_util, gpu_temp, ram, cpu_t):
     return img
 
 
-def find_display():
-    """COM port of the WeAct display (same match as the official driver)."""
+def probe_display(ser):
+    """Verify the device speaks the WeAct protocol: version handshake must
+    return exactly 19 bytes echoing CMD_SYSTEM_VERSION|CMD_READ."""
+    try:
+        ser.reset_input_buffer()
+        ser.write(bytes((CMD_SYSTEM_VERSION | CMD_READ, CMD_END)))
+        resp = ser.read(19)
+        return len(resp) == 19 and resp[0] == (CMD_SYSTEM_VERSION | CMD_READ)
+    except Exception:
+        return False
+
+
+def open_display():
+    """Find the display by VID/PID (serial-number fallback) and verify it
+    with a handshake; returns an initialized serial connection or None."""
     for p in list_ports.comports():
-        if p.vid == VID and p.pid == PID:
-            return p.device
-        if isinstance(p.serial_number, str) and p.serial_number.startswith("AD"):
-            return p.device
+        by_vidpid = p.vid == VID and p.pid == PID
+        by_serial = isinstance(p.serial_number, str) and p.serial_number.startswith("AD")
+        if not (by_vidpid or by_serial):
+            continue
+        try:
+            ser = serial.Serial(p.device, BAUD, timeout=1)
+        except serial.SerialException:
+            continue
+        if probe_display(ser):
+            init_display(ser)
+            return ser
+        ser.close()  # wrong device (or busy) - try the next candidate
     return None
 
 
@@ -237,21 +269,9 @@ def main():
     ser = None
     n = 0
     while True:
-        if ser is None:                      # not connected: find and open
-            port = find_display()
-            if port is None:
-                time.sleep(3)
-                continue
-            try:
-                ser = serial.Serial(port, BAUD, timeout=1)
-                init_display(ser)
-            except serial.SerialException:
-                if ser is not None:
-                    try:
-                        ser.close()
-                    except Exception:
-                        pass
-                ser = None
+        if ser is None:                      # not connected: find, verify, init
+            ser = open_display()
+            if ser is None:
                 time.sleep(3)
                 continue
 
@@ -279,8 +299,26 @@ def main():
         time.sleep(UPDATE_S)
 
 
+def already_running():
+    """True if another monitor instance (recorded in the pid file) is alive."""
+    try:
+        pid = int(PID_FILE.read_text(encoding="ascii", errors="ignore"))
+    except Exception:
+        return False
+    if pid == os.getpid():
+        return False
+    handle = ctypes.windll.kernel32.OpenProcess(0x1000, 0, pid)  # QUERY_LIMITED
+    if handle:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    return False
+
+
 if __name__ == "__main__":
-    PID_FILE.write_text(str(__import__("os").getpid()), encoding="ascii")
+    if already_running():
+        _log("another instance is running - exiting")
+        sys.exit(0)
+    PID_FILE.write_text(str(os.getpid()), encoding="ascii")
     try:
         main()
     except Exception:
