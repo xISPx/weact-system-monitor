@@ -27,10 +27,10 @@ if not defined PYW (
 )
 echo pythonw: %PYW%
 
-python -c "import serial, PIL, psutil" >nul 2>&1
+python -c "import serial, PIL, psutil, clr" >nul 2>&1
 if errorlevel 1 (
-  echo Installing missing Python packages: pyserial pillow psutil ...
-  python -m pip install --quiet pyserial pillow psutil
+  echo Installing missing Python packages: pyserial pillow psutil pythonnet ...
+  python -m pip install --quiet pyserial pillow psutil pythonnet
 )
 
 schtasks /create /f /tn WeActMonitor /sc onlogon /rl highest /tr "\"%PYW%\" \"%SCRIPT%\""

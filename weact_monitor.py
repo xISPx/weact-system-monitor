@@ -104,8 +104,62 @@ def gpu_stats():
         return None, None
 
 
+_LHM_COMP = None
+_LHM_CPU = None
+_LHM_TRIED = False
+
+
+def _init_lhm():
+    """LibreHardwareMonitorLib reader (lib/ next to this script).
+
+    Reads the real CPU package temperature via core DTS sensors. The library
+    loads inside this process (WinRing0 kernel driver, needs elevation) -
+    no third-party app is started. Use LibreHardwareMonitorLib 0.9.4:
+    newer releases ship no embedded kernel driver and read nothing.
+    """
+    global _LHM_COMP, _LHM_CPU, _LHM_TRIED
+    if _LHM_TRIED:
+        return _LHM_CPU
+    _LHM_TRIED = True
+    try:
+        import clr
+        clr.AddReference(str(BASE / "lib" / "LibreHardwareMonitorLib.dll"))
+        from LibreHardwareMonitor import Hardware
+        comp = Hardware.Computer()
+        comp.IsCpuEnabled = True
+        comp.Open()
+        cpu_hw = next((hw for hw in comp.Hardware if str(hw.HardwareType) == "Cpu"), None)
+        if cpu_hw is None:
+            _log("LHM init: no CPU hardware")
+            return None
+        _LHM_COMP = comp
+        _LHM_CPU = cpu_hw
+        _log(f"LHM init OK: {cpu_hw.Name}")
+        return cpu_hw
+    except Exception as exc:
+        _log(f"LHM init failed: {exc!r}")
+        return None
+
+
 def read_cpu_temp():
-    """ACPI thermal zone (max instance), degC. Requires elevated process."""
+    """CPU temperature, degC. Real DTS via LHM lib; ACPI zone as fallback."""
+    cpu_hw = _init_lhm()
+    if cpu_hw is not None:
+        try:
+            cpu_hw.Update()
+            package, core_max = None, None
+            for s in cpu_hw.Sensors:
+                if s.Value is None or str(s.SensorType) != "Temperature":
+                    continue
+                if "Package" in str(s.Name):
+                    package = float(s.Value)
+                elif str(s.Name).startswith("Core"):
+                    core_max = float(s.Value) if core_max is None else max(core_max, float(s.Value))
+            t = package if package is not None else core_max
+            return round(t) if t is not None and -10 < t < 110 else None
+        except Exception as exc:
+            _log(f"LHM read failed: {exc!r}")
+    # Fallback: ACPI thermal zone (elevated only). Some boards never update it.
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",

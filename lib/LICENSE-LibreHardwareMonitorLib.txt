@@ -1,0 +1,7 @@
+lib/LibreHardwareMonitorLib.dll is an unmodified build of LibreHardwareMonitorLib 0.9.4
+https://github.com/LibreHardwareMonitor/LibreHardwareMonitor
+Copyright (c) LibreHardwareMonitor contributors.
+Licensed under the MPL-2.0 license: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/main/LICENSE
+
+Use version 0.9.4: newer releases ship no embedded kernel driver and provide
+no CPU temperature when loaded as a library.
