@@ -41,10 +41,6 @@ CMD_SET_BITMAP = 0x05
 CMD_END = 0x0A
 NO_WINDOW_FLAG = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-F_LABEL = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 14)
-F_VALUE = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 16)
-F_INFO = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 14)
-
 COL_LABEL = (110, 170, 255)
 COL_TRACK = (45, 45, 45)
 
@@ -191,6 +187,24 @@ def _log(msg):
             f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
     except Exception:
         pass  # logging must never take the monitor down
+
+
+def _font(path, size):
+    """Truetype font with a logged fallback - a missing/broken font file
+    must not kill the process before the log is even available."""
+    try:
+        return ImageFont.truetype(path, size)
+    except Exception as exc:
+        _log(f"font fallback for {path}: {exc!r}")
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:  # Pillow < 10.1 has no sized default font
+            return ImageFont.load_default()
+
+
+F_LABEL = _font("C:/Windows/Fonts/arialbd.ttf", 14)
+F_VALUE = _font("C:/Windows/Fonts/arialbd.ttf", 16)
+F_INFO = _font("C:/Windows/Fonts/arialbd.ttf", 14)
 
 
 def render(cpu, gpu_util, gpu_temp, ram, cpu_t):

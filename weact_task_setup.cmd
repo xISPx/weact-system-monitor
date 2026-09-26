@@ -39,6 +39,8 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+rem unattended mode: restart on failure, no 72h time limit, allow battery power
+powershell -NoProfile -Command "$s = New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Set-ScheduledTask -TaskName WeActMonitor -Settings $s"
 schtasks /run /tn WeActMonitor
 echo.
 echo Done: task "WeActMonitor" created (autostart at logon, admin rights) and started.
