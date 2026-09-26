@@ -249,11 +249,7 @@ def open_display():
 
 
 def init_display(ser):
-    time.sleep(0.1)
-    ser.reset_input_buffer()
-    ser.write(bytes((CMD_SYSTEM_VERSION | CMD_READ, CMD_END)))   # handshake
-    ser.read(19)
-    ser.reset_input_buffer()
+    time.sleep(0.1)  # protocol already verified by probe_display()
     ser.write(bytes((CMD_SET_ORIENTATION, 0, CMD_END)))          # native portrait
     ser.write(bytes((CMD_SET_BRIGHTNESS, 178, 0xE8, 0x03, CMD_END)))  # ~70%
     ser.write(bytes((CMD_FULL, 0, 0, 0, 0, (PH_W - 1) & 0xFF, 0, (PH_H - 1) & 0xFF, 0)) +
@@ -299,31 +295,31 @@ def main():
         time.sleep(UPDATE_S)
 
 
-def already_running():
-    """True if another monitor instance (recorded in the pid file) is alive."""
-    try:
-        pid = int(PID_FILE.read_text(encoding="ascii", errors="ignore"))
-    except Exception:
-        return False
-    if pid == os.getpid():
-        return False
-    handle = ctypes.windll.kernel32.OpenProcess(0x1000, 0, pid)  # QUERY_LIMITED
-    if handle:
-        ctypes.windll.kernel32.CloseHandle(handle)
+_MUTEX = None  # keep referenced: the OS releases the mutex when the process dies
+
+
+def acquire_single_instance():
+    """Named-mutex singleton. The kernel releases the mutex on any process
+    death (even taskkill /F or power loss), so a reused PID cannot lock a
+    fresh instance out - unlike a pid-file liveness check."""
+    global _MUTEX
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    handle = kernel32.CreateMutexW(None, False, "Local\\WeActSystemMonitor")
+    if handle and ctypes.get_last_error() != 183:  # 183 = ERROR_ALREADY_EXISTS
+        _MUTEX = handle
         return True
     return False
 
 
 if __name__ == "__main__":
-    if already_running():
+    if not acquire_single_instance():
         _log("another instance is running - exiting")
         sys.exit(0)
-    PID_FILE.write_text(str(os.getpid()), encoding="ascii")
+    PID_FILE.write_text(str(os.getpid()), encoding="ascii")  # for manual taskkill
     try:
         main()
     except Exception:
         import traceback
-        prev = LOG_FILE.read_text(encoding="utf-8", errors="ignore") if LOG_FILE.exists() else ""
-        LOG_FILE.write_text(prev + f"--- {time.strftime('%Y-%m-%d %H:%M:%S')}\n" +
-                            traceback.format_exc(), encoding="utf-8")
+        _log(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} crash\n" + traceback.format_exc())
         raise
