@@ -89,8 +89,38 @@ def temp_color(t):
     return (40, 220, 80)
 
 
-def gpu_stats():
+def lhm_gpu_stats():
+    """GPU utilization/temp via LHM (NVIDIA/AMD/Intel). None = not available."""
+    if _init_lhm() is None or _LHM_GPU is None:
+        return None, None
     try:
+        _LHM_GPU.Update()
+        temps, loads = {}, {}
+        for s in _LHM_GPU.Sensors:
+            if s.Value is None:
+                continue
+            name = str(s.Name).lower()
+            if str(s.SensorType) == "Temperature":
+                temps[name] = float(s.Value)
+            elif str(s.SensorType) == "Load":
+                loads[name] = float(s.Value)
+        core_temps = [v for k, v in temps.items() if "hot spot" not in k and "memory" not in k]
+        temp = max(core_temps) if core_temps else (max(temps.values()) if temps else None)
+        load = loads.get("gpu core")
+        if load is None and loads:
+            load = max(loads.values())
+        return (round(load) if load is not None else None,
+                round(temp) if temp is not None else None)
+    except Exception as exc:
+        _log(f"LHM gpu read failed: {exc!r}")
+        return None, None
+
+
+def gpu_stats():
+    util, temp = lhm_gpu_stats()
+    if util is not None or temp is not None:
+        return util, temp
+    try:  # fallback: NVIDIA driver CLI (when LHM has no GPU hardware)
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu",
              "--format=csv,noheader,nounits"],
@@ -104,18 +134,20 @@ def gpu_stats():
 
 _LHM_COMP = None
 _LHM_CPU = None
+_LHM_GPU = None
 _LHM_TRIED = False
 
 
 def _init_lhm():
     """LibreHardwareMonitorLib reader (lib/ next to this script).
 
-    Reads the real CPU package temperature via core DTS sensors. The library
-    loads inside this process (WinRing0 kernel driver, needs elevation) -
-    no third-party app is started. Use LibreHardwareMonitorLib 0.9.4:
-    newer releases ship no embedded kernel driver and read nothing.
+    Reads the real CPU package temperature (core DTS) and GPU sensors
+    (temperature/load). The library loads inside this process (WinRing0
+    kernel driver, needs elevation) - no third-party app is started.
+    Use LibreHardwareMonitorLib 0.9.4: newer releases ship no embedded
+    kernel driver and read nothing.
     """
-    global _LHM_COMP, _LHM_CPU, _LHM_TRIED
+    global _LHM_COMP, _LHM_CPU, _LHM_GPU, _LHM_TRIED
     if _LHM_TRIED:
         return _LHM_CPU
     _LHM_TRIED = True
@@ -125,14 +157,21 @@ def _init_lhm():
         from LibreHardwareMonitor import Hardware
         comp = Hardware.Computer()
         comp.IsCpuEnabled = True
+        comp.IsGpuEnabled = True
         comp.Open()
         cpu_hw = next((hw for hw in comp.Hardware if str(hw.HardwareType) == "Cpu"), None)
-        if cpu_hw is None:
-            _log("LHM init: no CPU hardware")
+        gpus = [hw for hw in comp.Hardware if str(hw.HardwareType).startswith("Gpu")]
+        # prefer the discrete card on hybrid laptops (iGPU + dGPU)
+        gpu_hw = next((hw for hw in gpus
+                       if any(k in hw.Name.lower() for k in ("nvidia", "geforce", "radeon", "arc"))),
+                      gpus[0] if gpus else None)
+        if cpu_hw is None and gpu_hw is None:
+            _log("LHM init: no CPU/GPU hardware")
             return None
         _LHM_COMP = comp
         _LHM_CPU = cpu_hw
-        _log(f"LHM init OK: {cpu_hw.Name}")
+        _LHM_GPU = gpu_hw
+        _log(f"LHM init OK: {cpu_hw.Name if cpu_hw else 'no cpu'} + {gpu_hw.Name if gpu_hw else 'no gpu'}")
         return cpu_hw
     except Exception as exc:
         _log(f"LHM init failed: {exc!r}")
@@ -301,6 +340,11 @@ def main():
                 pass
             ser = None
             time.sleep(1)
+            continue
+        except Exception:                    # unattended daemon: log and keep
+            import traceback                 # going, the scheduler restart is
+            _log("frame failed:\n" + traceback.format_exc())  # the last resort
+            time.sleep(5)
             continue
 
         n += 1

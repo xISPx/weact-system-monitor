@@ -34,7 +34,7 @@ A ~4.5-second refresh loop shows what your PC is doing, right on the small bar d
 - **Single-instance safe** — a named OS mutex guards against double launches (manual + autostart collision); the kernel releases it on any process death, so a stale lock can never block a fresh start.
 - **Windows autostart, one click** — `weact_task_setup.cmd` self-elevates, locates `pythonw`, installs missing Python packages, creates a *Task Scheduler* job (`WeActMonitor`, runs at logon with admin rights) and starts it. Remove with `weact_task_remove.cmd`.
 - **CPU temperature without third-party software** — real core DTS temperature via the bundled LibreHardwareMonitorLib library (loaded inside the script's process, no app running, no tray icons). Falls back to the native ACPI thermal zone where the library isn't available.
-- **GPU stats from the driver** — utilization and temperature via `nvidia-smi`, no window flicker (`CREATE_NO_WINDOW`).
+- **GPU stats for any vendor** — utilization and temperature via the same LHM library (NVIDIA, AMD Radeon, Intel); on NVIDIA machines `nvidia-smi` remains as a fallback, without console flicker.
 - **Portable, self-maintaining** — pid/log files are placed next to the script (`Path(__file__)`), machine-specific paths are nowhere in the code; the log is append-only with automatic size-based rotation.
 - **Stock protocol, no custom firmware** — commands terminated by `0x0A`, pixels as RGB565 little-endian; one full-frame bitmap per update over 115200 baud.
 
@@ -49,7 +49,7 @@ A ~4.5-second refresh loop shows what your PC is doing, right on the small bar d
 - Windows 10/11
 - Python 3.8+ with `pyserial`, `pillow`, `psutil`, `pythonnet` (the installer pulls them automatically)
 - The `lib/` folder next to the script — it ships **LibreHardwareMonitorLib 0.9.4** (MPL-2.0), which provides the real CPU core temperature; newer LHM releases ship no embedded kernel driver and read nothing, so stick with 0.9.4
-- NVIDIA GPU for the GPU lines (via `nvidia-smi` bundled with the driver). Without it CPU/RAM still work, GPU shows `n/a`
+- GPU lines work on NVIDIA, AMD and Intel graphics (via the bundled LHM library); on NVIDIA-only setups `nvidia-smi` is the fallback. Without any supported GPU, CPU/RAM still work and the GPU row shows `n/a`
 - The display itself: **WeAct Studio Display FS V1 0.96"** (CH343 USB chip; Win10/11 usually installs the driver itself, otherwise get [CH343SER.EXE](https://www.wch-ic.com/downloads/CH343SER_EXE.html))
 
 ## Quick install (Windows)
@@ -86,7 +86,7 @@ All constants live at the top of `weact_monitor.py`:
 |---|---|
 | `CPU --` | Not elevated (Task Scheduler task required), or the LHM library failed to load — check `weact_monitor.log` |
 | CPU temp stuck at a constant | The ACPI fallback is active and this board never updates its thermal zone; make sure `lib\` is next to the script and the task runs elevated, so the real DTS readout is used |
-| GPU shows `n/a` | No NVIDIA GPU / `nvidia-smi` not in PATH |
+| GPU shows `n/a` | No GPU detectable by LHM (NVIDIA/AMD/Intel supported) |
 | Screen stays black after replug | Firmware can get stuck; unplug-replug the USB once, the next frame repaints it |
 | Exits right after start with `another instance is running` in the log | The single-instance mutex found a running copy — stop it first (`taskkill /F /PID` from `weact_monitor.pid`) |
 | Text upside down | Switch `ROT` to `ROTATE_90` |
@@ -102,7 +102,7 @@ All constants live at the top of `weact_monitor.py`:
 - **Защита от двойного запуска** — именованный мьютекс ОС: ядро снимает его при любой смерти процесса, поэтому «мёртвая» блокировка никогда не помешает свежему запуску.
 - **Автозапуск Windows в один клик** — `weact_task_setup.cmd` (запуск от администратора) сам найдёт pythonw, поставит pip-пакеты, создаст задачу планировщика **WeActMonitor** (при входе в систему, с правами админа — они нужны для температуры CPU) и запустит её. Удаление — `weact_task_remove.cmd`.
 - **Температура CPU без сторонних программ** — настоящая температура ядер через встроенную библиотеку [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) (грузится внутри процесса скрипта, никакого приложения и трея); фолбэк — системная ACPI-теплозона.
-- **Статистика GPU из драйвера** — `nvidia-smi` без мелькающих окон.
+- **Статистика GPU с любой видеокарты** — через ту же библиотеку LHM (NVIDIA, AMD Radeon, Intel); на NVIDIA-машинах фолбэк — `nvidia-smi` без мелькающих окон.
 - **Переносимость и самообслуживание** — pid/лог лежат рядом со скриптом, машинных путей в коде нет; лог пишется в режиме добавления с автоматической ротацией по размеру.
 
 **Установка:** скопировать папку → правый клик по `weact_task_setup.cmd` → «Запуск от имени администратора» → вставить дисплей в USB. Зависимости ставятся автоматически (`pip install pyserial pillow psutil`).
